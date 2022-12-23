@@ -37,9 +37,9 @@ async fn main() -> Result<(), anyhow::Error> {
             ))
         }
         (Some(db), _) => {
-            let mut app = tide::with_state(SqlxApp::<sqlx::Sqlite>::new(&db)?);
-            SqlxApp::<sqlx::Sqlite>::register_handlers(&mut app);
-            app.listen(args.bind_address).await?;
+            let mut app_impl = SqlxApp::<sqlx::Sqlite>::new(&db)?;
+            app_impl.migrate().await?;
+            return Ok(());
         }
         (_, Some(_db)) => {
             // TODO: SQL needs to be adjusted. rowid column does not exist in postgresql.
@@ -99,6 +99,56 @@ where
     for<'s> &'s str: sqlx::ColumnIndex<DB::Row>,
     usize: sqlx::ColumnIndex<DB::Row>,
 {
+
+    pub async fn migrate(
+        &self) -> anyhow::Result<()> {
+        let rows = sqlx::query::<DB>(
+            "SELECT
+                rowid,
+                game_start_time,
+                game_end_time
+             FROM finished_games
+             ORDER BY game_start_time DESC",
+        )
+        .fetch_all(&self.pool)
+        .await?;
+        let (oks, errs): (Vec<_>, _) = rows
+            .into_iter()
+            .map(|row| -> Result<_, anyhow::Error> {
+                Ok((
+                    RowId {
+                        // Turns out rowid is sensitive for sqlx.
+                        id: row.try_get("rowid")?,
+                    },
+                    to_time(row.try_get("game_start_time")?)?,
+                    to_time(row.try_get("game_end_time")?)?,
+                    ))
+            })
+            .partition(Result::is_ok);
+        if !errs.is_empty() {
+            error!(
+                "Failed to parse rows from the DB; sample errors: {:?}",
+                errs.iter()
+                    .take(5)
+                    .map(|x| x.as_ref().err().unwrap().to_string())
+                    .collect::<Vec<_>>()
+            );
+        }
+        if oks.is_empty() && !errs.is_empty() {
+            // None of the rows parsed, return the first error.
+            return Err(errs.into_iter().next().unwrap().unwrap_err().into());
+        }
+        for (rowid, start_time, end_time) in oks.into_iter().map(|x|x.unwrap()) {
+            let q = sqlx::query::<DB>(
+                "UPDATE finished_games set game_start_time=$1, game_end_time=$2 WHERE rowid=$3")
+                .bind(start_time)
+                .bind(end_time)
+                .bind(rowid.id);
+            log::info!("migrating {rowid:?} {start_time} {end_time}");
+            q.execute(&self.pool).await?;
+        }
+        Ok(())
+    }
     pub async fn finished_games(
         &self,
         game_start_time_range: Range<OffsetDateTime>,
@@ -453,6 +503,10 @@ fn format_timestamp_date_and_time(maybe_ts: Option<OffsetDateTime>) -> Option<(S
         ))
         .ok()?;
     Some((date, time))
+}
+
+fn to_time(t: i64) -> anyhow::Result<OffsetDateTime> {
+    Ok(OffsetDateTime::from_unix_timestamp(t)?)
 }
 
 fn sort<A, T>(mut array: A) -> A
