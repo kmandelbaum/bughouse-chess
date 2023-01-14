@@ -23,6 +23,11 @@ struct Args {
     static_content_url_prefix: String,
 }
 
+// The secret key would usually be read from a configuration file/environment variables.
+fn get_secret_key() -> cookie::Key {
+    cookie::Key::from("ahY8aec0mohjei8nu7bu4ohpuowooqu7uam0chaiquechoo1ii7aedoh4quouru3ziPeehiujethangath9kahphoo0kohhuewaew2ODohgie1Teuxe0Ziemacei1ya6eemeis9laay7WooyaeK8Eed7tai7Doh5eiChieshiep7aequoraceiquoY1yuh9iefeecae9vioc8xee4quei6aiN2oobiile6aemoo3suT8Ahyi8kee0oht7daewud6OoKueg3aebahWahgahheiYai0hai1thaePhae0aet8aequee0aiGhohn0gaizoogh9vohV5ceebu7aeheecoo6ingaikozahnaihaey8ohjad2aetoa7voothi3ieS2KeirachieQu4vih8tah4xeong8oufeife7eeveem1yooqu4rai9eenool0xohbiu7Eex2aiP1Aeh2koh8xiecooriohuu8miephohp5fiengaeX8zanu7Ith3ooyaeNg9".as_bytes())
+}
+
 #[async_std::main]
 async fn main() -> Result<(), anyhow::Error> {
     let args = Args::parse();
@@ -148,6 +153,7 @@ td.centered {
         app.at("/dyn/stats/:duration")
             .get(Self::handle_stats_with_duration);
         app.at("/dyn/history").get(Self::handle_history);
+        app.at("/dyn/login").get(Self::handle_login);
 
         app.with(tide::log::LogMiddleware::new());
 
@@ -439,6 +445,21 @@ td.centered {
         let mut resp = Response::new(StatusCode::Ok);
         resp.set_content_type(Mime::from("text/html; charset=UTF-8"));
         resp.set_body(h);
+        Ok(resp)
+    }
+
+    async fn handle_login(req: Request<Self>) -> tide::Result {
+        let mut resp = Response::new(StatusCode::Ok);
+        resp.set_content_type(Mime::from("text/plain; charset=UTF-8"));
+        resp.set_body("you should have a cookie now");
+        let mut jar = cookie::CookieJar::new();
+        let mut private_jar = jar.private(&get_secret_key());
+        private_jar.add(
+            cookie::CookieBuilder::new("session", "myfancysession")
+            .domain("localhost")
+            .path("/")
+            .finish());
+        resp.insert_cookie(jar.get("session").unwrap().clone());
         Ok(resp)
     }
 }
